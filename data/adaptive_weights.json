@@ -1,0 +1,10 @@
+{
+  "theme_multipliers": {
+    "矽光子與CPO傳輸": 1.08,
+    "散熱與液冷水冷": 1.03,
+    "AI伺服器與代工組裝": 1.0,
+    "重電綠能與強韌電網": 1.03
+  },
+  "min_volume_multiplier": 1.0,
+  "bias_penalty_multiplier": 1.0
+}

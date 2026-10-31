@@ -9,18 +9,20 @@ from news_fetcher import NewsFetcher
 from ai_analyzer import AIAnalyzer
 from tw_market_data import TaiwanMarketData
 from technical_filter import TechnicalFilter
+from learning_engine import SelfLearningEngine
 from config import Config
 
 logger = logging.getLogger(__name__)
 
 
 class TaiwanStockAIScanner:
-    """台股 AI 時事量價選股掃描器"""
+    """台股 AI 時事量價選股掃描器 (具備自我學習與覆盤反思能力)"""
 
     def __init__(self):
         self.news_fetcher = NewsFetcher()
         self.ai_analyzer = AIAnalyzer()
         self.market_data = TaiwanMarketData()
+        self.learning_engine = SelfLearningEngine()
 
     def run_full_scan(self, top_k: int = 10) -> Dict[str, Any]:
         """
@@ -77,7 +79,10 @@ class TaiwanStockAIScanner:
             elif tech_snapshot["bias_ma20"] > Config.MAX_BIAS_20:
                 risk_reward_part -= 15.0 # 乖離過熱重罰
 
-            total_score = round(max(0.0, min(100.0, ai_score_part + tech_score_part + risk_reward_part)), 1)
+            # 4. 取得 AI 自我學習引擎之動態加成 (題材連勝加分 / 避雷庫降權)
+            adaptive_boost = self.learning_engine.get_adaptive_boost(sym, theme)
+
+            total_score = round(max(0.0, min(100.0, ai_score_part + tech_score_part + risk_reward_part + adaptive_boost)), 1)
 
             # 判定評級標籤
             if total_score >= 82.0 and setup["is_valid_trade"]:
@@ -95,6 +100,7 @@ class TaiwanStockAIScanner:
                 "theme": theme,
                 "total_score": total_score,
                 "rank_grade": rank_grade,
+                "adaptive_boost": adaptive_boost,
                 "consensus_pct": consensus,
                 "ai1_view": cand.get("ai1_view", ""),
                 "ai2_view": cand.get("ai2_view", ""),
@@ -129,7 +135,15 @@ class TaiwanStockAIScanner:
         # 檢查本分鐘新偵測快訊
         breaking_news = [n for n in news_items if n.get("is_breaking_news")]
 
-        logger.info(">>> 步驟 4/4: 選股掃描完成！")
+        # 將 Top 3 首選自動註冊進自我學習追蹤器
+        for p in evaluated_picks[:3]:
+            if p["is_valid_trade"]:
+                self.learning_engine.register_new_signal(p)
+
+        # 盤後/即時自我覆盤成敗檢查
+        learning_review = self.learning_engine.update_and_review(self.market_data)
+
+        logger.info(">>> 步驟 4/4: 選股與自我覆盤學習完成！")
         return {
             "timestamp": news_items[0]["published_at"] if news_items else "",
             "total_news_analyzed": len(news_items),
@@ -138,7 +152,8 @@ class TaiwanStockAIScanner:
             "total_stocks_evaluated": len(evaluated_picks),
             "top_3_picks": evaluated_picks[:3],
             "top_picks": evaluated_picks[:top_k],
-            "raw_picks": evaluated_picks
+            "raw_picks": evaluated_picks,
+            "learning_review": learning_review
         }
 
     def diagnose_single_stock(self, symbol: str) -> Optional[Dict[str, Any]]:

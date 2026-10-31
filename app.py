@@ -94,11 +94,22 @@ async def handle_diagnose_api(request: web.Request) -> web.Response:
         return web.json_response({"error": str(e)}, status=500)
 
 
+async def handle_learning_stats(request: web.Request) -> web.Response:
+    """AI 自我學習與歷史勝率覆盤看板 API"""
+    try:
+        data = scanner.learning_engine.get_learning_dashboard_data()
+        return web.json_response(data)
+    except Exception as e:
+        logger.error(f"取得學習數據異常: {e}", exc_info=True)
+        return web.json_response({"error": str(e)}, status=500)
+
+
 def create_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/scan", handle_scan_api)
     app.router.add_get("/api/diagnose", handle_diagnose_api)
+    app.router.add_get("/api/learning_stats", handle_learning_stats)
     app.router.add_static("/static/", STATIC_DIR)
     return app
 
