@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>台股 AI 雙引擎時事戰情室 (TW Stock Sentinel App)</title>
+  <link rel="manifest" href="/static/manifest.json">
+  <meta name="theme-color" content="#0ea5e9">
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            twup: '#ef4444',    // 台股紅漲
+            twdown: '#10b981',  // 台股綠跌
+            brand: '#0ea5e9',
+            surface: '#1e293b',
+            darkbg: '#0f172a'
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @keyframes pulse-subtle {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .animate-pulse-slow {
+      animation: pulse-subtle 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    /* 自訂滾動條 */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+  </style>
+</head>
+<body class="bg-darkbg text-slate-100 min-h-screen flex flex-col font-sans antialiased selection:bg-brand selection:text-white">
+
+  <!-- 頂部導覽列 -->
+  <header class="sticky top-0 z-50 bg-slate-900/90 backdrop-blur-md border-b border-slate-800 shadow-lg">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand to-indigo-600 flex items-center justify-center shadow-lg shadow-sky-500/20">
+          <span class="text-xl">🚀</span>
+        </div>
+        <div>
+          <h1 class="text-lg md:text-xl font-bold bg-gradient-to-r from-sky-400 to-indigo-300 bg-clip-text text-transparent leading-tight">
+            台股 AI 雙引擎時事戰情室
+          </h1>
+          <div class="flex items-center space-x-2 text-xs text-slate-400">
+            <span class="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+            <span class="font-medium">每 60 秒即時監控台股與最新報導</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右側控制項 -->
+      <div class="flex items-center space-x-3">
+        <!-- 倒數指示器 -->
+        <div class="hidden sm:flex items-center space-x-2 bg-slate-800/80 px-3 py-1.5 rounded-lg border border-slate-700/60 text-xs">
+          <span class="text-slate-400">下次刷新:</span>
+          <span id="countdown-text" class="font-mono font-bold text-sky-400">60s</span>
+        </div>
+
+        <!-- 音效提示按鈕 -->
+        <button id="audio-toggle" onclick="toggleAudioAlert()" title="開啟/關閉 S 級飆股叮咚提示音" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs flex items-center space-x-1 transition">
+          <span id="audio-icon">🔔</span>
+          <span class="hidden md:inline">音效提示</span>
+        </button>
+
+        <!-- 手動快掃按鈕 -->
+        <button onclick="triggerManualScan()" id="btn-refresh" class="bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white font-medium px-3.5 py-1.5 rounded-lg text-xs md:text-sm flex items-center space-x-1.5 shadow-md shadow-sky-500/20 transition active:scale-95">
+          <svg id="refresh-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+          </svg>
+          <span>即刻快掃</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 60秒倒數細進度條 -->
+    <div class="w-full bg-slate-800 h-1 overflow-hidden">
+      <div id="countdown-bar" class="bg-gradient-to-r from-sky-400 to-indigo-500 h-1 transition-all duration-1000 ease-linear" style="width: 100%;"></div>
+    </div>
+  </header>
+
+  <!-- 即時快訊跑馬燈 -->
+  <div class="bg-slate-900/60 border-b border-slate-800/80 px-4 py-2">
+    <div class="max-w-7xl mx-auto flex items-center space-x-3 text-xs overflow-hidden">
+      <span class="shrink-0 font-bold px-2 py-0.5 rounded bg-twup/20 text-twup border border-twup/30 flex items-center space-x-1">
+        <span>🚨 即時快訊</span>
+      </span>
+      <div class="relative w-full overflow-hidden whitespace-nowrap">
+        <div id="news-ticker" class="text-slate-300 font-medium inline-block truncate">
+          載入最新時事新聞中...
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 主要內容區 -->
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 py-6 space-y-8">
+
+    <!-- 搜尋與個股快速健檢區塊 -->
+    <div class="bg-surface/70 border border-slate-700/60 rounded-2xl p-4 md:p-5 shadow-xl backdrop-blur-sm">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h2 class="text-base md:text-lg font-bold text-white flex items-center space-x-2">
+            <span>🔍 台股專屬時事與入場價健檢</span>
+            <span class="text-xs font-normal text-sky-400 bg-sky-950/80 border border-sky-800/50 px-2 py-0.5 rounded-full">即時算停利/停損</span>
+          </h2>
+          <p class="text-xs text-slate-400 mt-1">輸入任何台股代號（如 2330、3017、6442），AI 立即為您精算建議入場價與停利賣點。</p>
+        </div>
+
+        <div class="flex items-center space-x-2 max-w-md w-full">
+          <div class="relative flex-1">
+            <input type="text" id="symbol-input" placeholder="例如: 2330 或 3017" 
+                   class="w-full bg-slate-900/90 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition">
+          </div>
+          <button onclick="diagnoseStock()" class="bg-sky-600 hover:bg-sky-500 text-white font-medium px-4 py-2 rounded-xl text-sm transition active:scale-95 shrink-0 shadow-md shadow-sky-600/30">
+            開始診斷
+          </button>
+        </div>
+      </div>
+
+      <!-- 個股診斷即時跳出卡片 (預設隱藏) -->
+      <div id="diagnosis-result" class="hidden mt-4 pt-4 border-t border-slate-700/60 animate-fade-in">
+        <!-- 動態填入診斷結果 -->
+      </div>
+    </div>
+
+    <!-- 👑 核心 Top 3 首選飆股戰情卡片 -->
+    <section>
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h2 class="text-xl md:text-2xl font-black text-white flex items-center space-x-2">
+            <span class="text-amber-400">👑</span>
+            <span>雙 AI 整合精選推薦前三名 (Top 3)</span>
+          </h2>
+          <p class="text-xs md:text-sm text-slate-400 mt-0.5">時事催化 + 均線多頭 + 爆量突破 + 成功率精算</p>
+        </div>
+        <span class="text-xs text-slate-400 bg-slate-800 px-2.5 py-1 rounded-lg border border-slate-700">
+          更新頻率: 60s
+        </span>
+      </div>
+
+      <!-- 三張大卡片 Grid -->
+      <div id="top3-container" class="grid grid-cols-1 md:grid-cols-3 gap-5">
+        <!-- 卡片骨架加載中 -->
+        <div class="bg-surface/80 rounded-2xl p-6 border border-slate-700/50 animate-pulse h-96"></div>
+        <div class="bg-surface/80 rounded-2xl p-6 border border-slate-700/50 animate-pulse h-96"></div>
+        <div class="bg-surface/80 rounded-2xl p-6 border border-slate-700/50 animate-pulse h-96"></div>
+      </div>
+    </section>
+
+    <!-- 📊 全市場推薦排行榜表格 (Top Overview) -->
+    <section class="bg-surface/70 border border-slate-700/60 rounded-2xl overflow-hidden shadow-xl backdrop-blur-sm">
+      <div class="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
+        <h3 class="text-base md:text-lg font-bold text-white flex items-center space-x-2">
+          <span>📊 全市場 AI 推薦排行總覽 (Top 10)</span>
+        </h3>
+        <span class="text-xs text-slate-400">點擊個股可查看完整操盤規劃</span>
+      </div>
+
+      <div class="overflow-x-auto">
+        <table class="w-full text-left border-collapse text-xs md:text-sm">
+          <thead>
+            <tr class="bg-slate-900/80 text-slate-400 border-b border-slate-800 font-medium">
+              <th class="py-3 px-4">名次</th>
+              <th class="py-3 px-4">個股標的</th>
+              <th class="py-3 px-4">核心題材</th>
+              <th class="py-3 px-4 text-center">AI 總分</th>
+              <th class="py-3 px-4 text-center">雙AI共識</th>
+              <th class="py-3 px-4 text-center">預估成功率</th>
+              <th class="py-3 px-4 text-right">現價 / 漲跌</th>
+              <th class="py-3 px-4 text-center">量能倍數</th>
+              <th class="py-3 px-4 text-center">操作訊號</th>
+              <th class="py-3 px-4 text-right">建議買進</th>
+              <th class="py-3 px-4 text-right">防守停損</th>
+              <th class="py-3 px-4 text-right">第一目標價</th>
+            </tr>
+          </thead>
+          <tbody id="overview-tbody" class="divide-y divide-slate-800/60 font-mono">
+            <tr><td colspan="12" class="text-center py-8 text-slate-500">掃描數據載入中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- 底部版權宣告與風控提醒 -->
+  <footer class="bg-slate-950 border-t border-slate-800/80 py-6 text-center text-xs text-slate-500 space-y-2">
+    <p>🚀 台股 AI 雙引擎時事智能監控系統 • 嚴格風報比與紀律操盤</p>
+    <p class="text-[11px] text-slate-600">免責聲明：本系統所有分析與數據僅供量化研究與決策參考，不構成實體投資要約。股市有風險，買賣請嚴守停損紀律。</p>
+  </footer>
+
+  <!-- 前端核心 JavaScript 邏輯 -->
+  <script>
+    let countdownSec = 60;
+    let countdownTimer = null;
+    let audioEnabled = false;
+    let latestScanData = null;
+
+    // 播放叮咚提示音 (Web Audio API)
+    function playChime() {
+      if (!audioEnabled) return;
+      try {
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
+        osc.frequency.setValueAtTime(880.00, audioCtx.currentTime + 0.15); // A5
+        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.6);
+      } catch(e) { console.log("Audio play error", e); }
+    }
+
+    function toggleAudioAlert() {
+      audioEnabled = !audioEnabled;
+      const icon = document.getElementById('audio-icon');
+      const btn = document.getElementById('audio-toggle');
+      if (audioEnabled) {
+        icon.innerText = '🔔';
+        btn.classList.add('border-sky-500', 'text-sky-400');
+        playChime();
+      } else {
+        icon.innerText = '🔕';
+        btn.classList.remove('border-sky-500', 'text-sky-400');
+      }
+    }
+
+    // 倒數計時器
+    function startCountdown() {
+      if (countdownTimer) clearInterval(countdownTimer);
+      countdownSec = 60;
+      updateCountdownUI();
+
+      countdownTimer = setInterval(() => {
+        countdownSec--;
+        updateCountdownUI();
+
+        if (countdownSec <= 0) {
+          countdownSec = 60;
+          fetchScanData();
+        }
+      }, 1000);
+    }
+
+    function updateCountdownUI() {
+      document.getElementById('countdown-text').innerText = `${countdownSec}s`;
+      const pct = (countdownSec / 60) * 100;
+      document.getElementById('countdown-bar').style.width = `${pct}%`;
+    }
+
+    // 請求掃描 API
+    async function fetchScanData() {
+      const refreshIcon = document.getElementById('refresh-icon');
+      refreshIcon.classList.add('animate-spin');
+
+      try {
+        const res = await fetch('/api/scan');
+        const data = await res.json();
+        latestScanData = data;
+        renderDashboard(data);
+        playChime();
+      } catch (err) {
+        console.error("無法連線後端 API:", err);
+      } finally {
+        refreshIcon.classList.remove('animate-spin');
+      }
+    }
+
+    function triggerManualScan() {
+      fetchScanData();
+      startCountdown();
+    }
+
+    // 渲染戰情室畫面
+    function renderDashboard(data) {
+      // 1. 跑馬燈
+      const ticker = document.getElementById('news-ticker');
+      if (data.breaking_news_list && data.breaking_news_list.length > 0) {
+        ticker.innerText = data.breaking_news_list.map(n => `【${n.source}】${n.title}`).join('　•　');
+      } else {
+        ticker.innerText = "盤中即時監控中：暫無最新突發異動報導。";
+      }
+
+      // 2. 渲染 Top 3 卡片
+      const top3Container = document.getElementById('top3-container');
+      const top3 = data.top_3_picks || [];
+
+      if (top3.length === 0) {
+        top3Container.innerHTML = `<div class="col-span-3 text-center py-10 text-slate-400">目前尚無符合標準之標的</div>`;
+        return;
+      }
+
+      top3Container.innerHTML = top3.map((p, idx) => {
+        const rankLabels = ["🥇 首選第一名", "🥈 首選第二名", "🥉 首選第三名"];
+        const rankBorder = idx === 0 ? "border-amber-500/60 shadow-amber-500/10" : (idx === 1 ? "border-sky-500/60 shadow-sky-500/10" : "border-indigo-500/60 shadow-indigo-500/10");
+        const rankBg = idx === 0 ? "from-amber-500/10 via-surface to-surface" : "from-slate-800 via-surface to-surface";
+
+        return `
+          <div class="relative bg-gradient-to-b ${rankBg} rounded-2xl p-5 border ${rankBorder} shadow-xl flex flex-col justify-between transition hover:-translate-y-1">
+            <!-- 標頭 -->
+            <div>
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-xs font-black tracking-wide uppercase px-2.5 py-0.5 rounded-full bg-slate-900 border border-slate-700 text-amber-400">
+                  ${rankLabels[idx]}
+                </span>
+                <span class="text-xs font-bold px-2 py-0.5 rounded bg-twup/20 text-twup border border-twup/40">
+                  ${p.action_tag.split(' ')[0]} ${p.action_tag.split(' ')[1] || ''}
+                </span>
+              </div>
+
+              <!-- 股票代號名稱 -->
+              <div class="flex items-baseline justify-between mt-1">
+                <div>
+                  <h3 class="text-2xl font-black text-white">${p.name} <span class="text-base text-slate-400 font-mono">${p.symbol}</span></h3>
+                  <span class="text-xs font-medium text-sky-400 bg-sky-950/70 border border-sky-800/60 px-2 py-0.5 rounded">
+                    ${p.theme}
+                  </span>
+                </div>
+                <div class="text-right">
+                  <div class="text-2xl font-black text-twup font-mono">${p.price}</div>
+                  <div class="text-xs font-bold text-twup">+${p.change_pct}%</div>
+                </div>
+              </div>
+
+              <!-- 預估勝率量表 -->
+              <div class="mt-4 bg-slate-900/80 p-3 rounded-xl border border-slate-800">
+                <div class="flex justify-between items-center text-xs mb-1.5">
+                  <span class="text-slate-400 font-medium">預估波段成功率 (勝率)</span>
+                  <span class="font-bold text-twup text-sm font-mono">${p.win_rate_pct}%</span>
+                </div>
+                <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden">
+                  <div class="bg-gradient-to-r from-amber-500 to-twup h-2 rounded-full" style="width: ${p.win_rate_pct}%"></div>
+                </div>
+                <div class="text-[11px] text-slate-500 mt-1 truncate">
+                  ${p.sample_stats || '歷史統計同型態高勝率'}
+                </div>
+              </div>
+
+              <!-- 雙 AI 共識 -->
+              <div class="mt-3 flex items-center justify-between text-xs bg-slate-900/50 px-3 py-2 rounded-lg border border-slate-800">
+                <span class="text-slate-400">雙 AI 整合共識度</span>
+                <span class="font-bold text-sky-400 font-mono">${p.consensus_pct}% (總分: ${p.total_score})</span>
+              </div>
+
+              <!-- 操盤進出場戰術核心盒 -->
+              <div class="mt-4 space-y-2 bg-slate-900/90 p-3.5 rounded-xl border border-slate-800 text-xs">
+                <div class="flex justify-between items-center">
+                  <span class="text-slate-400 font-medium">🛒 建議買進區間</span>
+                  <span class="font-bold text-white font-mono bg-slate-800 px-2 py-0.5 rounded">${p.entry_zone} 元</span>
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-slate-400 font-medium">🛑 防守停損價位</span>
+                  <span class="font-bold text-twup font-mono bg-twup/10 px-2 py-0.5 rounded border border-twup/30">${p.stop_loss} 元 (-${p.risk_pct}%)</span>
+                </div>
+                <div class="flex justify-between items-center border-t border-slate-800/80 pt-2">
+                  <span class="text-slate-400 font-medium">🎯 第一階段賣點 (賣1/2)</span>
+                  <span class="font-bold text-amber-300 font-mono">${p.target_1} 元 (+${p.target_gain_pct || 14.5}%)</span>
+                </div>
+                <div class="flex justify-between items-center">
+                  <span class="text-slate-400 font-medium">🚀 第二階段賣點 (波段全出)</span>
+                  <span class="font-bold text-emerald-400 font-mono">${p.target_2} 元 (+25%)</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- AI 觀點細節 -->
+            <div class="mt-4 pt-3 border-t border-slate-800 text-[11px] text-slate-400 line-clamp-2">
+              💡 ${p.reasons && p.reasons[0] ? p.reasons[0] : '受惠時事題材大單湧入'}
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      // 3. 渲染全市場表格
+      const tbody = document.getElementById('overview-tbody');
+      const allPicks = data.top_picks || [];
+      tbody.innerHTML = allPicks.map((p, idx) => {
+        return `
+          <tr class="hover:bg-slate-800/50 transition cursor-pointer" onclick="fillSymbol('${p.symbol}')">
+            <td class="py-3 px-4 font-bold text-slate-400 text-center">${idx + 1}</td>
+            <td class="py-3 px-4">
+              <span class="font-bold text-white">${p.name}</span>
+              <span class="text-xs text-slate-500 block">${p.symbol}</span>
+            </td>
+            <td class="py-3 px-4 text-slate-300">${p.theme}</td>
+            <td class="py-3 px-4 text-center font-bold text-twup">${p.total_score}</td>
+            <td class="py-3 px-4 text-center text-sky-400">${p.consensus_pct}%</td>
+            <td class="py-3 px-4 text-center font-bold text-twup">${p.win_rate_pct}%</td>
+            <td class="py-3 px-4 text-right">
+              <span class="font-bold text-twup">${p.price}</span>
+              <span class="text-[11px] text-twup block">+${p.change_pct}%</span>
+            </td>
+            <td class="py-3 px-4 text-center text-slate-300 font-mono">${p.vol_ratio}x</td>
+            <td class="py-3 px-4 text-center">
+              <span class="px-2 py-0.5 rounded text-[11px] bg-slate-800 text-slate-300 border border-slate-700">
+                ${p.action_tag.slice(0, 8)}
+              </span>
+            </td>
+            <td class="py-3 px-4 text-right text-slate-200">${p.entry_zone.split('~')[0]}</td>
+            <td class="py-3 px-4 text-right text-twup">${p.stop_loss}</td>
+            <td class="py-3 px-4 text-right font-bold text-amber-300">${p.target_1}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function fillSymbol(sym) {
+      document.getElementById('symbol-input').value = sym;
+      diagnoseStock();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    // 個股即時診斷 API
+    async function diagnoseStock() {
+      const sym = document.getElementById('symbol-input').value.trim();
+      if (!sym) return;
+
+      const resDiv = document.getElementById('diagnosis-result');
+      resDiv.classList.remove('hidden');
+      resDiv.innerHTML = `<div class="text-center py-4 text-slate-400">正在調用雙 AI 進行【${sym}】精準診斷中...</div>`;
+
+      try {
+        const res = await fetch(`/api/diagnose?symbol=${sym}`);
+        const data = await res.json();
+        if (data.error) {
+          resDiv.innerHTML = `<div class="text-twup text-sm font-medium">❌ ${data.error}</div>`;
+          return;
+        }
+
+        const t = data.tech;
+        const s = data.setup;
+
+        resDiv.innerHTML = `
+          <div class="bg-slate-900/90 rounded-xl p-4 border border-sky-500/40 shadow-lg">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-800 gap-2">
+              <div>
+                <h4 class="text-lg font-black text-white">${t.name} <span class="text-sky-400 font-mono">(${t.symbol})</span></h4>
+                <span class="text-xs text-slate-400">${t.trend_alignment}</span>
+              </div>
+              <div class="flex items-center space-x-3">
+                <span class="text-xs font-bold px-2 py-1 rounded bg-twup/20 text-twup border border-twup/40">
+                  ${s.action_tag}
+                </span>
+                <span class="text-xl font-black text-twup font-mono">${t.price} 元</span>
+              </div>
+            </div>
+
+            <!-- 數據網格 -->
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 my-3 text-xs">
+              <div class="bg-slate-800/60 p-2.5 rounded-lg border border-slate-700/60">
+                <div class="text-slate-400">預估成功率</div>
+                <div class="text-base font-black text-twup mt-0.5">${s.win_rate_pct}%</div>
+              </div>
+              <div class="bg-slate-800/60 p-2.5 rounded-lg border border-slate-700/60">
+                <div class="text-slate-400">🛒 建議入場區間</div>
+                <div class="text-sm font-bold text-white mt-0.5">${s.entry_zone}</div>
+              </div>
+              <div class="bg-slate-800/60 p-2.5 rounded-lg border border-slate-700/60">
+                <div class="text-slate-400">🛑 防守停損價</div>
+                <div class="text-sm font-bold text-twup mt-0.5">${s.stop_loss} 元</div>
+              </div>
+              <div class="bg-slate-800/60 p-2.5 rounded-lg border border-slate-700/60">
+                <div class="text-slate-400">🎯 第一停利賣點</div>
+                <div class="text-sm font-bold text-amber-300 mt-0.5">${s.target_1} 元 (+${s.target_gain_pct}%)</div>
+              </div>
+            </div>
+
+            <!-- 理由 -->
+            <div class="text-xs text-slate-300 pt-2 border-t border-slate-800">
+              💡 <strong>時事受惠分析:</strong> ${data.reasons && data.reasons[0] ? data.reasons[0] : '核心供應鏈穩定成長'}
+            </div>
+          </div>
+        `;
+      } catch (err) {
+        resDiv.innerHTML = `<div class="text-twup text-sm font-medium">連線發生錯誤，請稍後重試。</div>`;
+      }
+    }
+
+    // 啟動加載
+    window.addEventListener('DOMContentLoaded', () => {
+      fetchScanData();
+      startCountdown();
+    });
+  </script>
+</body>
+</html>
+
