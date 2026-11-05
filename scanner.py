@@ -126,6 +126,7 @@ class TaiwanStockAIScanner:
                 "reasons": cand["reasons"][:2],
                 "related_news": cand["related_news_titles"][:2],
                 "horizon": cand["horizon"],
+                "data_source": tech_snapshot.get("data_source", "TWSE"),
                 "is_valid_trade": setup["is_valid_trade"]
             })
 

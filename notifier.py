@@ -182,11 +182,15 @@ class StockNotifier:
         ])
 
         content = "\n".join(lines)
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(content)
-
-        logger.info(f"成功輸出台股 AI 操盤日報: {file_path}")
-        return str(file_path)
+        try:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            logger.info(f"成功輸出台股 AI 操盤日報: {file_path}")
+            return str(file_path)
+        except Exception as e:
+            logger.warning(f"輸出報告至硬碟略過或無權限: {e}")
+            return ""
 
     @staticmethod
     def send_telegram_alert(pick: Dict[str, Any]) -> bool:
