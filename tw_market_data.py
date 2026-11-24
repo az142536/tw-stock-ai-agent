@@ -53,6 +53,7 @@ class TaiwanMarketData:
 
     def __init__(self):
         self.cache: Dict[str, Dict[str, Any]] = {}
+        self.cache_ttl = 300
         self.openapi_market_quotes: Dict[str, Dict[str, Any]] = {}
         self.last_openapi_sync = 0
         self.openapi_ttl = 300  # 每 5 分鐘快取刷新一次
@@ -155,6 +156,49 @@ class TaiwanMarketData:
             self.openapi_market_quotes = quotes
             self.last_openapi_sync = now
 
+    def _fetch_yahoo_history(self, symbol: str) -> Optional[Dict[str, Any]]:
+        """取得真實歷史日線，用於計算 MA、量比及 KD；支援上市與上櫃。"""
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
+        for suffix in [".TW", ".TWO"]:
+            ticker = f"{symbol}{suffix}"
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval=1d&range=3mo"
+            try:
+                req = urllib.request.Request(url, headers=headers)
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                result = data.get("chart", {}).get("result", [])
+                if not result:
+                    continue
+                chart = result[0]
+                timestamps = chart.get("timestamp", [])
+                indicators = chart.get("indicators", {})
+                quote = (indicators.get("quote") or [{}])[0]
+                closes = quote.get("close") or []
+                volumes = quote.get("volume") or []
+                highs = quote.get("high") or []
+                lows = quote.get("low") or []
+                opens = quote.get("open") or []
+                if len(closes) < 5:
+                    continue
+
+                points = []
+                for i, close in enumerate(closes):
+                    if close is not None:
+                        points.append({
+                            "close": float(close),
+                            "volume": int(volumes[i] or 0) if i < len(volumes) else 0,
+                            "high": float(highs[i]) if i < len(highs) and highs[i] is not None else float(close),
+                            "low": float(lows[i]) if i < len(lows) and lows[i] is not None else float(close),
+                            "open": float(opens[i]) if i < len(opens) and opens[i] is not None else float(close),
+                        })
+                if points:
+                    return {"points": points, "source": f"Yahoo_{suffix}"}
+            except Exception as e:
+                logger.debug(f"Yahoo 歷史日線 {ticker} 讀取失敗: {e}")
+        return None
+
     def _fetch_yahoo_finance_quote(self, symbol: str) -> Optional[Dict[str, Any]]:
         """第二重備援：Yahoo 財經即時 API (支援 .TW 上市 與 .TWO 上櫃)"""
         headers = {
@@ -192,8 +236,9 @@ class TaiwanMarketData:
         2. 次之採用 Yahoo Finance 即時盤中成交價
         3. 最後採用 2026 最新校準基準行情
         """
-        if symbol in self.cache:
-            return self.cache[symbol]
+        cached = self.cache.get(symbol)
+        if cached and (time.time() - cached.get("_cached_at", 0) < self.cache_ttl):
+            return cached
 
         profile = get_stock_profile(symbol)
         name = profile["name"] if profile else f"個股_{symbol}"
@@ -224,53 +269,101 @@ class TaiwanMarketData:
                 volume = max(100, yf_quote["volume"])
                 source_tag = yf_quote.get("source", "Yahoo")
 
-        # 3. 若皆離線（例如無外部網路或沙盒測試），啟用 2026 校準真實基準
+        # 3. 正式模式不允許假價格。僅 ENABLE_DEMO_FALLBACK=true 時提供校準示範資料。
         if price <= 0:
-            bench = BENCHMARK_STOCKS.get(symbol, {
-                "name": name,
-                "base_price": 150.0 + (int(symbol) % 300),
-                "base_vol": 8000 + (int(symbol) % 15000),
-                "trend": "bullish"
-            })
-            base_p = bench["base_price"]
-            base_v = bench["base_vol"]
-            trend_type = bench.get("trend", "bullish")
-
-            np.random.seed(int(symbol) + 42)
-            if trend_type == "bullish_breakout":
-                change_pct = round(float(np.random.uniform(2.5, 6.5)), 2)
-                vol_ratio = round(float(np.random.uniform(1.3, 2.0)), 2)
-            elif trend_type == "bullish":
+            if not Config.ENABLE_DEMO_FALLBACK:
+                source_tag = "UNAVAILABLE"
+            else:
+                bench = BENCHMARK_STOCKS.get(symbol, {
+                    "name": name,
+                    "base_price": 150.0 + (int(symbol) % 300),
+                    "base_vol": 8000 + (int(symbol) % 15000),
+                    "trend": "bullish"
+                })
+                base_p = bench["base_price"]
+                base_v = bench["base_vol"]
+                np.random.seed(int(symbol) + 42)
                 change_pct = round(float(np.random.uniform(1.0, 3.5)), 2)
                 vol_ratio = round(float(np.random.uniform(1.05, 1.4)), 2)
-            elif trend_type == "consolidation":
-                change_pct = round(float(np.random.uniform(-0.8, 1.2)), 2)
-                vol_ratio = round(float(np.random.uniform(0.75, 1.05)), 2)
-            else:
-                change_pct = round(float(np.random.uniform(-1.5, 0.5)), 2)
-                vol_ratio = round(float(np.random.uniform(0.6, 0.95)), 2)
+                price = round(base_p * (1.0 + change_pct / 100.0), 2)
+                volume = int(base_v * vol_ratio)
+                source_tag = "DEMO_CALIBRATED_BENCHMARK"
 
-            price = round(base_p * (1.0 + change_pct / 100.0), 2)
-            volume = int(base_v * vol_ratio)
-            source_tag = "Calibrated_Benchmark"
+        # 優先使用真實歷史日線計算均線與量比；無歷史資料時不得自行推算成交決策。
+        history = self._fetch_yahoo_history(symbol)
+        if history:
+            points = history["points"]
+            closes = [p["close"] for p in points]
+            volumes = [p["volume"] for p in points]
+            ma5 = round(sum(closes[-5:]) / min(5, len(closes)), 1)
+            ma20 = round(sum(closes[-20:]) / min(20, len(closes)), 1)
+            ma60 = round(sum(closes[-60:]) / min(60, len(closes)), 1)
+            vol_ma5 = max(50, int(sum(volumes[-5:]) / max(1, min(5, len(volumes))) / 1000))
+            if price <= 0:
+                price = round(closes[-1], 2)
+                prev_close = closes[-2] if len(closes) >= 2 else price
+                change_pct = round(((price - prev_close) / prev_close) * 100.0, 2) if prev_close > 0 else 0.0
+                volume = int(volumes[-1] / 1000)
+            source_tag = f"Historical_{history['source']}"
 
-        # 推算真實均線體系 (MA5, MA20, MA60)
-        # 依據台股主力強勢股真實多頭線型結構
-        is_bullish = change_pct >= 0 or (price >= 200)
-        ma5 = round(price * 0.982, 1)
-        ma20 = round(price * 0.955, 1)
-        ma60 = round(price * 0.920, 1)
+            is_bullish = price >= ma20 and ma5 >= ma20
+
+            # KD（9 日未成熟隨機值），以真實日線 High/Low 計算。
+            recent = points[-9:]
+            highest = max(p["high"] for p in recent)
+            lowest = min(p["low"] for p in recent)
+            rsv = ((closes[-1] - lowest) / (highest - lowest) * 100.0) if highest > lowest else 50.0
+            kd_k = round(max(0.0, min(100.0, rsv)), 1)
+            kd_d = round(max(0.0, min(100.0, kd_k * 0.7 + 30.0 * 0.3)), 1)
+        else:
+            if not Config.ENABLE_DEMO_FALLBACK:
+                snapshot = {
+                    "symbol": symbol,
+                    "name": name,
+                    "price": price,
+                    "change_pct": change_pct,
+                    "volume": volume,
+                    "vol_ma5": 0,
+                    "vol_ratio": 0.0,
+                    "ma5": 0.0,
+                    "ma20": 0.0,
+                    "ma60": 0.0,
+                    "bias_ma20": 0.0,
+                    "kd_k": 50.0,
+                    "kd_d": 50.0,
+                    "trend_alignment": "資料不可用",
+                    "is_bullish": False,
+                    "is_volume_spike": False,
+                    "is_overheated": False,
+                    "data_source": "UNAVAILABLE",
+                    "_cached_at": time.time()
+                }
+                self.cache[symbol] = snapshot
+                return snapshot
+
+            ma5 = ma20 = ma60 = 0.0
+            vol_ma5 = 0
+            kd_k = kd_d = 50.0
+            is_bullish = False
+            if source_tag not in ("UNAVAILABLE", "DEMO_CALIBRATED_BENCHMARK"):
+                source_tag = f"{source_tag}_HISTORY_UNAVAILABLE"
+            if Config.ENABLE_DEMO_FALLBACK:
+                ma5 = round(price * 0.982, 1)
+                ma20 = round(price * 0.955, 1)
+                ma60 = round(price * 0.920, 1)
 
         # 月線乖離率 BIAS % = (價格 - 20MA) / 20MA * 100
-        bias_ma20 = round(((price - ma20) / ma20) * 100.0, 2)
+        bias_ma20 = round(((price - ma20) / ma20) * 100.0, 2) if ma20 > 0 else 0.0
 
-        # 估算量比
-        vol_ma5 = max(50, int(volume / 1.35))
-        vol_ratio = round(volume / max(vol_ma5, 1), 2)
-
-        # KD 指標推算
-        kd_k = min(92.0, max(30.0, round(55.0 + (change_pct * 3.5), 1)))
-        kd_d = min(90.0, max(32.0, round(kd_k * 0.93, 1)))
+        # 僅正式歷史日線模式使用真實量比；示範模式保留單日模擬量比。
+        if not history:
+            vol_ma5 = max(50, int(volume / 1.35))
+            vol_ratio = round(volume / max(vol_ma5, 1), 2)
+            if Config.ENABLE_DEMO_FALLBACK:
+                kd_k = min(92.0, max(30.0, round(55.0 + (change_pct * 3.5), 1)))
+                kd_d = min(90.0, max(32.0, round(kd_k * 0.93, 1)))
+        else:
+            vol_ratio = round(volume / max(vol_ma5, 1), 2)
 
         snapshot = {
             "symbol": symbol,
@@ -290,7 +383,8 @@ class TaiwanMarketData:
             "is_bullish": is_bullish,
             "is_volume_spike": vol_ratio >= Config.VOLUME_SPIKE_RATIO,
             "is_overheated": bias_ma20 > Config.MAX_BIAS_20,
-            "data_source": source_tag
+            "data_source": source_tag,
+            "_cached_at": time.time()
         }
 
         self.cache[symbol] = snapshot

@@ -11,6 +11,8 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
 class Config:
+    # 正式模式不得使用隨機/校準假行情。僅在 --demo 或明確測試時啟用。
+    ENABLE_DEMO_FALLBACK = os.getenv("ENABLE_DEMO_FALLBACK", "false").strip().lower() in ("1", "true", "yes")
     # -----------------------------
     # AI 模型配置 (LLM Settings)
     # -----------------------------
