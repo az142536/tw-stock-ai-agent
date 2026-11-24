@@ -51,6 +51,9 @@ class TaiwanStockAIScanner:
             
             # 取得該檔股票即時行情與技術指標
             tech_snapshot = self.market_data.get_stock_technical_snapshot(sym)
+            if tech_snapshot.get("data_source") == "UNAVAILABLE":
+                logger.warning(f"略過 {sym}：TWSE/TPEX/Yahoo 均無可用即時與歷史資料")
+                continue
             # 評估技術線型、停損停利、風報比與歷史回測勝率
             setup = TechnicalFilter.evaluate_setup(tech_snapshot, theme=theme, dual_ai_consensus=consensus)
 
@@ -164,6 +167,8 @@ class TaiwanStockAIScanner:
         
         matched_cand = next((c for c in ai_candidates if c["symbol"] == symbol), None)
         tech_snapshot = self.market_data.get_stock_technical_snapshot(symbol)
+        if tech_snapshot.get("data_source") == "UNAVAILABLE":
+            return None
         theme = matched_cand.get("theme", "台股熱門題材") if matched_cand else "台股熱門題材"
         consensus = matched_cand.get("consensus_pct", 80.0) if matched_cand else 75.0
         setup = TechnicalFilter.evaluate_setup(tech_snapshot, theme=theme, dual_ai_consensus=consensus)

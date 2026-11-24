@@ -60,6 +60,8 @@ flowchart TD
 
 ## ⚡ 快速開始 (Quick Start)
 
+> **正式環境資料規則**：預設不會使用校準假價或隨機模擬行情。程式會優先使用 TWSE/TPEX 官方行情與真實歷史日線，無資料時會明確標示 `UNAVAILABLE` 且略過推薦。僅可在測試或展示環境設定 `ENABLE_DEMO_FALLBACK=true` 啓用示範資料。
+
 ### 1. 安裝相依套件
 
 本系統使用標準 Python 套件：
